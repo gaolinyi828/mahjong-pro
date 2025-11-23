@@ -114,7 +114,6 @@ export default function MahjongSessionApp() {
 
   if (loading) return <div className="h-screen flex items-center justify-center bg-slate-100 text-emerald-700 font-bold">正在加载数据...</div>;
 
-  // If there is an active session, force the "Play" tab, otherwise show standard tabs
   const displayedTab = activeSessionId ? 'play' : activeTab;
 
   return (
@@ -139,42 +138,27 @@ export default function MahjongSessionApp() {
 
       {/* Content */}
       <main className="flex-1 overflow-y-auto p-4 pb-24">
-        
         {displayedTab === 'play' && currentSession && (
           <ActiveTable 
             session={currentSession} 
             rounds={currentSessionRounds}
             players={players}
             onEndSession={handleEndSession}
-            db={db}
-            appId={appId}
+            db={db} appId={appId}
           />
         )}
-
         {displayedTab === 'home' && (
-          <HomeView 
-            sessions={sessions} 
-            players={players} 
-            onStartNew={() => setActiveTab('new_session')}
-          />
+          <HomeView sessions={sessions} players={players} onStartNew={() => setActiveTab('new_session')} />
         )}
-
         {displayedTab === 'new_session' && (
-          <NewSessionSetup 
-            players={players} 
-            onStart={handleStartSession} 
-            onCancel={() => setActiveTab('home')}
-          />
+          <NewSessionSetup players={players} onStart={handleStartSession} onCancel={() => setActiveTab('home')} />
         )}
-
         {displayedTab === 'stats' && (
           <GlobalStats players={players} allRounds={allRounds} sessions={sessions} />
         )}
-
         {displayedTab === 'players' && (
           <PlayerManager players={players} db={db} appId={appId} />
         )}
-
       </main>
 
       {/* Navigation */}
@@ -210,7 +194,6 @@ function ActiveTable({ session, rounds, players, onEndSession, db, appId }) {
 
   return (
     <div className="space-y-6">
-      {/* Session Header Card */}
       <div className="bg-white p-4 rounded-2xl shadow-sm border border-emerald-100">
         <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-3">
            <div>
@@ -224,7 +207,6 @@ function ActiveTable({ session, rounds, players, onEndSession, db, appId }) {
            </button>
         </div>
 
-        {/* Live Scoreboard */}
         <div className="grid grid-cols-4 gap-2">
           {session.playerIds.map((pid, idx) => {
             const p = players.find(pl => pl.id === pid);
@@ -244,7 +226,6 @@ function ActiveTable({ session, rounds, players, onEndSession, db, appId }) {
         </div>
       </div>
 
-      {/* Actions */}
       {!showInput ? (
         <button 
           onClick={() => setShowInput(true)}
@@ -262,7 +243,6 @@ function ActiveTable({ session, rounds, players, onEndSession, db, appId }) {
         />
       )}
 
-      {/* History List */}
       <div className="space-y-3">
         <h3 className="text-sm font-bold text-slate-500 ml-1">本场明细 ({rounds.length}局)</h3>
         <div className="space-y-2">
@@ -291,10 +271,9 @@ function ActiveTable({ session, rounds, players, onEndSession, db, appId }) {
   );
 }
 
-// --- Score Input (Updated: Multi-tag) ---
+// --- Score Input (Fixed: Convert Arrays to Object for Firestore) ---
 function ScoreInput({ session, players, onCancel, onSave, db, appId }) {
   const [scores, setScores] = useState(['', '', '', '']);
-  // 升级：每个人是一个标签数组，比如 [['pao'], ['zimo', 'pao'], [], ['hu']]
   const [tags, setTags] = useState([[], [], [], []]);
 
   const updateScore = (idx, val) => {
@@ -310,11 +289,9 @@ function ScoreInput({ session, players, onCancel, onSave, db, appId }) {
     else updateScore(idx, '-' + val);
   }
 
-  // 核心逻辑：切换标签状态
   const toggleTag = (playerIdx, tagType) => {
     const newTags = [...tags];
     const currentPlayerTags = newTags[playerIdx];
-    
     if (currentPlayerTags.includes(tagType)) {
       newTags[playerIdx] = currentPlayerTags.filter(t => t !== tagType);
     } else {
@@ -331,10 +308,15 @@ function ScoreInput({ session, players, onCancel, onSave, db, appId }) {
       if (!confirm(`总分为 ${sum}，确定提交吗？`)) return;
     }
     
+    // ✅ 关键修复：Firebase 不支持嵌套数组 (Array of Arrays)
+    // 我们必须将二维数组 tags 转换为对象存储
+    // 例如: [['zimo'], []] -> { 0: ['zimo'], 1: [] }
+    const tagsMap = Object.assign({}, tags);
+
     await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'club_rounds'), {
       sessionId: session.id,
       scores: finalScores,
-      tags: tags, // ✅ 存入多标签数据
+      tags: tagsMap, // 存为对象
       timestamp: serverTimestamp()
     });
     onSave();
@@ -354,7 +336,6 @@ function ScoreInput({ session, players, onCancel, onSave, db, appId }) {
            const p = players.find(pl => pl.id === pid);
            return (
              <div key={idx} className="flex flex-col gap-1 border-b border-slate-50 pb-2 last:border-0">
-                {/* 第一行：名字和分数 */}
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <div className="w-6 h-6 rounded bg-slate-100 text-slate-500 flex items-center justify-center text-xs font-bold">
@@ -379,32 +360,10 @@ function ScoreInput({ session, players, onCancel, onSave, db, appId }) {
                   </div>
                 </div>
 
-                {/* 第二行：标签开关 */}
                 <div className="flex gap-2 pl-8">
-                  <button 
-                    onClick={() => toggleTag(idx, 'zimo')}
-                    className={`px-2 py-1 rounded text-[10px] border transition-all ${
-                      isActive(idx, 'zimo') ? 'bg-red-500 text-white border-red-500' : 'bg-white text-slate-400 border-slate-200'
-                    }`}
-                  >
-                    自摸
-                  </button>
-                  <button 
-                    onClick={() => toggleTag(idx, 'hu')}
-                    className={`px-2 py-1 rounded text-[10px] border transition-all ${
-                      isActive(idx, 'hu') ? 'bg-orange-500 text-white border-orange-500' : 'bg-white text-slate-400 border-slate-200'
-                    }`}
-                  >
-                    接炮
-                  </button>
-                  <button 
-                    onClick={() => toggleTag(idx, 'pao')}
-                    className={`px-2 py-1 rounded text-[10px] border transition-all ${
-                      isActive(idx, 'pao') ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-slate-400 border-slate-200'
-                    }`}
-                  >
-                    点炮
-                  </button>
+                  <button onClick={() => toggleTag(idx, 'zimo')} className={`px-2 py-1 rounded text-[10px] border transition-all ${isActive(idx, 'zimo') ? 'bg-red-500 text-white border-red-500' : 'bg-white text-slate-400 border-slate-200'}`}>自摸</button>
+                  <button onClick={() => toggleTag(idx, 'hu')} className={`px-2 py-1 rounded text-[10px] border transition-all ${isActive(idx, 'hu') ? 'bg-orange-500 text-white border-orange-500' : 'bg-white text-slate-400 border-slate-200'}`}>接炮</button>
+                  <button onClick={() => toggleTag(idx, 'pao')} className={`px-2 py-1 rounded text-[10px] border transition-all ${isActive(idx, 'pao') ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-slate-400 border-slate-200'}`}>点炮</button>
                 </div>
              </div>
            )
@@ -423,17 +382,12 @@ function ScoreInput({ session, players, onCancel, onSave, db, appId }) {
   );
 }
 
-// --- Global Stats (Updated: Compatible) ---
+// --- Global Stats (Updated) ---
 function GlobalStats({ players, allRounds, sessions }) {
   const stats = useMemo(() => {
     const playerStats = {};
     players.forEach(p => {
-      playerStats[p.id] = { 
-        id: p.id, name: p.name, 
-        total: 0, count: 0, wins: 0,       
-        zimo: 0, hu: 0, pao: 0,        
-        max: -9999,    
-      };
+      playerStats[p.id] = { id: p.id, name: p.name, total: 0, count: 0, wins: 0, zimo: 0, hu: 0, pao: 0, max: -9999 };
     });
 
     allRounds.forEach(round => {
@@ -451,12 +405,15 @@ function GlobalStats({ players, allRounds, sessions }) {
           if (s > 0) pStat.wins += 1;
           if (s > pStat.max) pStat.max = s;
 
-          // 兼容解析
-          if (round.tags && Array.isArray(round.tags[idx])) {
-            const myTags = round.tags[idx];
-            if (myTags.includes('zimo')) pStat.zimo += 1;
-            if (myTags.includes('hu')) pStat.hu += 1;
-            if (myTags.includes('pao')) pStat.pao += 1;
+          // tags 解析逻辑 (兼容数组和对象)
+          // Firestore 取出的对象依然可以通过索引访问: tags[0]
+          if (round.tags && (Array.isArray(round.tags[idx]) || round.tags[idx])) {
+             const myTags = round.tags[idx];
+             if (Array.isArray(myTags)) { // 确保是数组
+                if (myTags.includes('zimo')) pStat.zimo += 1;
+                if (myTags.includes('hu')) pStat.hu += 1;
+                if (myTags.includes('pao')) pStat.pao += 1;
+             }
           } else if (round.roles && typeof round.roles[idx] === 'string') {
              const role = round.roles[idx];
              if (role === 'zimo') pStat.zimo += 1;
@@ -467,10 +424,7 @@ function GlobalStats({ players, allRounds, sessions }) {
       });
     });
 
-    return Object.values(playerStats)
-      .filter(p => p.count > 0)
-      .sort((a, b) => b.total - a.total);
-
+    return Object.values(playerStats).filter(p => p.count > 0).sort((a, b) => b.total - a.total);
   }, [players, allRounds, sessions]);
 
   const getRate = (num, total) => total > 0 ? Math.round((num / total) * 100) : 0;
@@ -479,9 +433,7 @@ function GlobalStats({ players, allRounds, sessions }) {
     <div className="space-y-6">
       <div className="bg-white p-6 rounded-2xl shadow-sm border border-emerald-100 text-center">
         <h2 className="text-xl font-bold text-emerald-800">全能数据分析</h2>
-        <p className="text-slate-400 text-xs mt-1">
-          支持血战模式：单局可同时统计点炮与自摸
-        </p>
+        <p className="text-slate-400 text-xs mt-1">支持血战模式：单局可同时统计点炮与自摸</p>
       </div>
 
       <div className="grid grid-cols-1 gap-4">
@@ -523,8 +475,6 @@ function GlobalStats({ players, allRounds, sessions }) {
     </div>
   );
 }
-
-// --- Standard Components ---
 
 function HomeView({ sessions, players, onStartNew }) {
   return (
@@ -651,11 +601,24 @@ function PlayerManager({ players, db, appId }) {
   )
 }
 
-function NavBtn({ id, icon: Icon, label, active, set }) {
+function NavBtn({ id, icon: Icon, label, active, set, isMain }) {
+  if (isMain) {
+    return (
+      <button 
+        onClick={() => set(id)}
+        className="relative -top-5 bg-emerald-600 text-white p-4 rounded-2xl shadow-lg shadow-emerald-200 active:scale-95 transition-transform"
+      >
+        <Icon size={24} />
+      </button>
+    )
+  }
   return (
-    <button onClick={() => set(id)} className={`flex flex-col items-center gap-1 w-16 py-1 rounded-lg transition-colors ${active === id ? 'text-emerald-700 font-bold' : 'text-slate-400 hover:bg-slate-50'}`}>
+    <button 
+      onClick={() => set(id)}
+      className={`flex flex-col items-center gap-1 w-16 py-1 rounded-lg transition-colors ${active === id ? 'text-emerald-700 font-bold' : 'text-slate-400 hover:bg-slate-50'}`}
+    >
       <Icon size={20} strokeWidth={active === id ? 2.5 : 2} />
-      <span className="text-[10px]">{label}</span>
+      <span className="scale-90">{label}</span>
     </button>
   );
 }
