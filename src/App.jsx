@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Plus, Users, BarChart3, History, Trophy, 
   UserPlus, ChevronRight, ArrowRightLeft,
-  PlayCircle, CalendarDays, CheckCircle2, X, Trash2, AlertTriangle
+  PlayCircle, CalendarDays, CheckCircle2, X, Trash2, Edit3, Settings
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { 
@@ -31,6 +31,39 @@ const db = getFirestore(app);
 
 const appId = 'mahjong-pro';
 
+// --- 预设头像库 ---
+const PRESET_AVATARS = [
+  '🀄', '🎲', '🐲', '🐯', '🦊', '🐶', '🐱', '🐷', 
+  '🐸', '🐼', '🐻', '🐨', '🐵', '🐔', '🦄', '🐝',
+  '👻', '👽', '🤖', '💩', '🤡', '👹', '👺', '💀',
+  '👨‍💻', '👩‍💻', '🤴', '👸', '🕵️‍♂️', '🥷', '🎅', '🧛‍♂️'
+];
+
+// --- 统一头像组件 ---
+function Avatar({ player, size = "md", className = "" }) {
+  // size: sm, md, lg, xl
+  const sizeClasses = {
+    xs: "w-6 h-6 text-[10px]",
+    sm: "w-8 h-8 text-xs",
+    md: "w-10 h-10 text-sm",
+    lg: "w-14 h-14 text-xl",
+    xl: "w-20 h-20 text-4xl"
+  };
+
+  const content = player?.avatar || player?.name?.[0] || '?';
+  const isUrl = content.startsWith('http');
+
+  return (
+    <div className={`${sizeClasses[size]} rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center font-bold text-slate-600 overflow-hidden shadow-sm shrink-0 ${className}`}>
+      {isUrl ? (
+        <img src={content} alt={player?.name} className="w-full h-full object-cover" />
+      ) : (
+        <span>{content}</span>
+      )}
+    </div>
+  );
+}
+
 // --- Main App ---
 export default function MahjongSessionApp() {
   const [user, setUser] = useState(null);
@@ -58,39 +91,21 @@ export default function MahjongSessionApp() {
   useEffect(() => {
     if (!user) return;
 
-    // 1. Players
-    const unsubPlayers = onSnapshot(
-      query(collection(db, 'artifacts', appId, 'public', 'data', 'club_players')), 
-      (snap) => setPlayers(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-    );
-
-    // 2. Sessions (场)
-    const unsubSessions = onSnapshot(
-      query(collection(db, 'artifacts', appId, 'public', 'data', 'club_sessions'), orderBy('startTime', 'desc')),
-      (snap) => {
+    const unsubPlayers = onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'club_players')), (snap) => setPlayers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubSessions = onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'club_sessions'), orderBy('startTime', 'desc')), (snap) => {
         const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
         setSessions(list);
-        // Check for any active session to auto-resume
         const active = list.find(s => s.isActive);
         if (active) setActiveSessionId(active.id);
         setLoading(false);
-      }
-    );
-
-    // 3. Rounds (局)
-    const unsubRounds = onSnapshot(
-      query(collection(db, 'artifacts', appId, 'public', 'data', 'club_rounds'), orderBy('timestamp', 'desc')),
-      (snap) => setAllRounds(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-    );
-
+    });
+    const unsubRounds = onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'club_rounds'), orderBy('timestamp', 'desc')), (snap) => setAllRounds(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     return () => { unsubPlayers(); unsubSessions(); unsubRounds(); };
   }, [user]);
 
-  // Logic to switch views
   const currentSession = sessions.find(s => s.id === activeSessionId);
   const currentSessionRounds = allRounds.filter(r => r.sessionId === activeSessionId);
 
-  // Function to start a new session
   const handleStartSession = async (selectedPlayerIds) => {
     const docRef = await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'club_sessions'), {
       startTime: serverTimestamp(),
@@ -101,7 +116,6 @@ export default function MahjongSessionApp() {
     setActiveTab('play'); 
   };
 
-  // Function to end session
   const handleEndSession = async () => {
     if (!confirm("确定要结束这一场吗？结束后将归档数据。")) return;
     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'club_sessions', activeSessionId), {
@@ -112,41 +126,23 @@ export default function MahjongSessionApp() {
     setActiveTab('home');
   };
 
-  // --- 🔥 新增：清除所有数据 ---
   const handleClearAllData = async () => {
     if (!confirm('⚠️ 严重警告：此操作将删除所有数据！\n\n包括所有玩家、历史战绩、牌局记录。\n\n确定要执行吗？')) return;
-    if (!confirm('再次确认：数据删除后无法恢复！真的要删吗？')) return;
-
     setLoading(true);
     try {
-      // 批量删除需要先获取所有文档
       const batch = writeBatch(db);
-      let operationCount = 0;
-      const MAX_BATCH_SIZE = 400; // Firestore batch limit is 500
-
-      // 辅助函数：删除集合中的文档
-      const deleteCollection = async (collectionName) => {
-         const snap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', collectionName));
-         snap.docs.forEach(d => {
-            batch.delete(d.ref);
-            operationCount++;
-         });
+      const deleteCollection = async (colName) => {
+         const snap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', colName));
+         snap.docs.forEach(d => batch.delete(d.ref));
       };
-
       await deleteCollection('club_rounds');
       await deleteCollection('club_sessions');
       await deleteCollection('club_players');
-
-      if (operationCount > 0) {
-        await batch.commit();
-        alert(`成功删除了 ${operationCount} 条数据。世界清静了。`);
-      } else {
-        alert('本来就是空的，没啥好删的。');
-      }
-      
+      await batch.commit();
+      alert(`数据已清空。`);
     } catch (e) {
-      console.error("Delete failed", e);
-      alert("删除失败，请查看控制台错误信息。可能数据量太大，请去 Firebase 控制台手动删除。");
+      console.error(e);
+      alert("删除失败，请重试。");
     }
     setLoading(false);
   };
@@ -157,8 +153,6 @@ export default function MahjongSessionApp() {
 
   return (
     <div className="h-screen bg-slate-50 text-slate-800 font-sans flex flex-col max-w-md mx-auto overflow-hidden">
-      
-      {/* Header */}
       <header className="bg-emerald-800 text-white p-4 pt-10 pb-4 shadow-md z-10">
         <div className="flex justify-between items-center">
           <div>
@@ -175,24 +169,12 @@ export default function MahjongSessionApp() {
         </div>
       </header>
 
-      {/* Content */}
       <main className="flex-1 overflow-y-auto p-4 pb-24">
         {displayedTab === 'play' && currentSession && (
-          <ActiveTable 
-            session={currentSession} 
-            rounds={currentSessionRounds}
-            players={players}
-            onEndSession={handleEndSession}
-            db={db} appId={appId}
-          />
+          <ActiveTable session={currentSession} rounds={currentSessionRounds} players={players} onEndSession={handleEndSession} db={db} appId={appId} />
         )}
         {displayedTab === 'home' && (
-          <HomeView 
-            sessions={sessions} 
-            players={players} 
-            onStartNew={() => setActiveTab('new_session')} 
-            onClearData={handleClearAllData}
-          />
+          <HomeView sessions={sessions} players={players} onStartNew={() => setActiveTab('new_session')} onClearData={handleClearAllData} />
         )}
         {displayedTab === 'new_session' && (
           <NewSessionSetup players={players} onStart={handleStartSession} onCancel={() => setActiveTab('home')} />
@@ -205,14 +187,10 @@ export default function MahjongSessionApp() {
         )}
       </main>
 
-      {/* Navigation */}
       {!activeSessionId && displayedTab !== 'new_session' && (
         <nav className="fixed bottom-0 w-full max-w-md bg-white border-t border-slate-200 p-2 pb-6 flex justify-around z-20">
           <NavBtn id="home" icon={History} label="战绩" active={activeTab} set={setActiveTab} />
-          <button 
-             onClick={() => setActiveTab('new_session')}
-             className="relative -top-6 bg-emerald-600 text-white w-14 h-14 rounded-full shadow-lg shadow-emerald-200 flex items-center justify-center active:scale-95 transition-transform"
-          >
+          <button onClick={() => setActiveTab('new_session')} className="relative -top-6 bg-emerald-600 text-white w-14 h-14 rounded-full shadow-lg shadow-emerald-200 flex items-center justify-center active:scale-95 transition-transform">
             <Plus size={28} />
           </button>
           <NavBtn id="stats" icon={BarChart3} label="统计" active={activeTab} set={setActiveTab} />
@@ -257,9 +235,7 @@ function ActiveTable({ session, rounds, players, onEndSession, db, appId }) {
             const score = runningTotals[idx];
             return (
               <div key={pid} className="flex flex-col items-center p-2 rounded-xl bg-slate-50 relative">
-                 <div className="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center text-xs font-bold text-slate-600 mb-1 shadow-sm">
-                   {p?.name[0]}
-                 </div>
+                 <Avatar player={p} size="sm" className="mb-1" />
                  <div className="text-xs font-medium text-slate-500 mb-1 w-full text-center truncate">{p?.name}</div>
                  <div className={`text-lg font-mono font-black ${score > 0 ? 'text-red-500' : score < 0 ? 'text-emerald-600' : 'text-slate-300'}`}>
                    {score > 0 ? `+${score}` : score}
@@ -271,20 +247,11 @@ function ActiveTable({ session, rounds, players, onEndSession, db, appId }) {
       </div>
 
       {!showInput ? (
-        <button 
-          onClick={() => setShowInput(true)}
-          className="w-full bg-emerald-600 text-white py-4 rounded-2xl shadow-lg shadow-emerald-100 flex items-center justify-center gap-2 font-bold text-lg active:scale-95 transition-transform"
-        >
+        <button onClick={() => setShowInput(true)} className="w-full bg-emerald-600 text-white py-4 rounded-2xl shadow-lg shadow-emerald-100 flex items-center justify-center gap-2 font-bold text-lg active:scale-95 transition-transform">
           <Plus size={24} /> 记一局
         </button>
       ) : (
-        <ScoreInput 
-          session={session} 
-          players={players} 
-          onCancel={() => setShowInput(false)} 
-          onSave={() => setShowInput(false)}
-          db={db} appId={appId}
-        />
+        <ScoreInput session={session} players={players} onCancel={() => setShowInput(false)} onSave={() => setShowInput(false)} db={db} appId={appId} />
       )}
 
       <div className="space-y-3">
@@ -300,10 +267,7 @@ function ActiveTable({ session, rounds, players, onEndSession, db, appId }) {
                    </span>
                  ))}
                </div>
-               <button 
-                onClick={() => confirm('删除这局记录？') && deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'club_rounds', r.id))}
-                className="text-slate-300 hover:text-red-400 ml-2"
-               >
+               <button onClick={() => confirm('删除这局记录？') && deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'club_rounds', r.id))} className="text-slate-300 hover:text-red-400 ml-2">
                  <span className="text-xs">×</span>
                </button>
             </div>
@@ -350,14 +314,9 @@ function ScoreInput({ session, players, onCancel, onSave, db, appId }) {
     if (finalScores.reduce((a,b)=>a+b,0) !== 0) {
       if (!confirm(`总分为 ${sum}，确定提交吗？`)) return;
     }
-    
     const tagsMap = Object.assign({}, tags);
-
     await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'club_rounds'), {
-      sessionId: session.id,
-      scores: finalScores,
-      tags: tagsMap, // 存为对象
-      timestamp: serverTimestamp()
+      sessionId: session.id, scores: finalScores, tags: tagsMap, timestamp: serverTimestamp()
     });
     onSave();
   };
@@ -367,7 +326,7 @@ function ScoreInput({ session, players, onCancel, onSave, db, appId }) {
   return (
     <div className="bg-white rounded-2xl shadow-lg border border-emerald-100 p-4 animate-in slide-in-from-bottom-4">
       <div className="flex justify-between items-center mb-4">
-        <h3 className="font-bold text-slate-700">战绩录入 (多选模式)</h3>
+        <h3 className="font-bold text-slate-700">战绩录入</h3>
         <button onClick={onCancel} className="text-slate-400 text-sm">取消</button>
       </div>
 
@@ -378,29 +337,17 @@ function ScoreInput({ session, players, onCancel, onSave, db, appId }) {
              <div key={idx} className="flex flex-col gap-1 border-b border-slate-50 pb-2 last:border-0">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded bg-slate-100 text-slate-500 flex items-center justify-center text-xs font-bold">
-                      {['东','南','西','北'][idx]}
-                    </div>
+                    <Avatar player={p} size="sm" />
                     <span className="font-bold text-slate-700">{p?.name}</span>
                   </div>
                   
                   <div className="flex items-center gap-1">
-                    <button onClick={() => toggleSign(idx)} className="p-1.5 bg-slate-100 rounded text-slate-400">
-                      <ArrowRightLeft size={14} />
-                    </button>
-                    <input 
-                      type="number"
-                      inputMode="decimal"
-                      className={`w-20 p-1 text-right font-mono text-xl font-bold border-b-2 outline-none bg-transparent
-                        ${(parseInt(scores[idx])||0) > 0 ? 'text-red-500 border-red-200' : (parseInt(scores[idx])||0) < 0 ? 'text-emerald-600 border-emerald-200' : 'text-slate-800 border-slate-200'}`}
-                      placeholder="0"
-                      value={scores[idx]}
-                      onChange={(e) => updateScore(idx, e.target.value)}
-                    />
+                    <button onClick={() => toggleSign(idx)} className="p-1.5 bg-slate-100 rounded text-slate-400"><ArrowRightLeft size={14} /></button>
+                    <input type="number" inputMode="decimal" className={`w-20 p-1 text-right font-mono text-xl font-bold border-b-2 outline-none bg-transparent ${(parseInt(scores[idx])||0) > 0 ? 'text-red-500 border-red-200' : (parseInt(scores[idx])||0) < 0 ? 'text-emerald-600 border-emerald-200' : 'text-slate-800 border-slate-200'}`} placeholder="0" value={scores[idx]} onChange={(e) => updateScore(idx, e.target.value)} />
                   </div>
                 </div>
 
-                <div className="flex gap-2 pl-8">
+                <div className="flex gap-2 pl-10">
                   <button onClick={() => toggleTag(idx, 'zimo')} className={`px-2 py-1 rounded text-[10px] border transition-all ${isActive(idx, 'zimo') ? 'bg-red-500 text-white border-red-500' : 'bg-white text-slate-400 border-slate-200'}`}>自摸</button>
                   <button onClick={() => toggleTag(idx, 'hu')} className={`px-2 py-1 rounded text-[10px] border transition-all ${isActive(idx, 'hu') ? 'bg-orange-500 text-white border-orange-500' : 'bg-white text-slate-400 border-slate-200'}`}>接炮</button>
                   <button onClick={() => toggleTag(idx, 'pao')} className={`px-2 py-1 rounded text-[10px] border transition-all ${isActive(idx, 'pao') ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-slate-400 border-slate-200'}`}>点炮</button>
@@ -409,15 +356,11 @@ function ScoreInput({ session, players, onCancel, onSave, db, appId }) {
            )
         })}
       </div>
-
       <div className="flex items-center justify-between mb-4 px-2 text-sm">
         <span className="text-slate-400">校验和:</span>
         <span className={`font-bold ${sum !== 0 ? 'text-orange-500' : 'text-emerald-500'}`}>{sum}</span>
       </div>
-
-      <button onClick={handleSubmit} className="w-full bg-emerald-600 text-white py-3 rounded-xl font-bold shadow active:scale-95 transition-transform">
-        确认记录
-      </button>
+      <button onClick={handleSubmit} className="w-full bg-emerald-600 text-white py-3 rounded-xl font-bold shadow active:scale-95 transition-transform">确认记录</button>
     </div>
   );
 }
@@ -426,7 +369,7 @@ function GlobalStats({ players, allRounds, sessions }) {
   const stats = useMemo(() => {
     const playerStats = {};
     players.forEach(p => {
-      playerStats[p.id] = { id: p.id, name: p.name, total: 0, count: 0, wins: 0, zimo: 0, hu: 0, pao: 0, max: -9999 };
+      playerStats[p.id] = { id: p.id, name: p.name, avatar: p.avatar, total: 0, count: 0, wins: 0, zimo: 0, hu: 0, pao: 0, max: -9999 };
     });
 
     allRounds.forEach(round => {
@@ -478,10 +421,11 @@ function GlobalStats({ players, allRounds, sessions }) {
           <div key={stat.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-50 relative overflow-hidden">
              <div className="flex justify-between items-center mb-4 border-b border-slate-50 pb-2">
                 <div className="flex items-center gap-2">
-                   <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs text-white font-bold
+                   <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs text-white font-bold shrink-0
                      ${index === 0 ? 'bg-yellow-400' : 'bg-slate-300'}`}>
                      {index + 1}
                    </div>
+                   <Avatar player={stat} size="md" />
                    <span className="font-bold text-lg text-slate-700">{stat.name}</span>
                 </div>
                 <div className={`text-xl font-black font-mono ${stat.total>0?'text-red-500':'text-emerald-600'}`}>
@@ -533,7 +477,10 @@ function HomeView({ sessions, players, onStartNew, onClearData }) {
         </h3>
         <div className="space-y-3">
           {sessions.filter(s => !s.isActive).map(s => {
-            const sPlayers = s.playerIds.map(id => players.find(p => p.id === id)?.name).join('、');
+            const sPlayers = s.playerIds.map(id => {
+              const p = players.find(pl => pl.id === id);
+              return p ? p.name : '未知';
+            }).join('、');
             return (
               <div key={s.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-100">
                  <div className="text-xs text-slate-400 mb-2 flex items-center gap-1">
@@ -554,14 +501,9 @@ function HomeView({ sessions, players, onStartNew, onClearData }) {
         </div>
       </div>
 
-      {/* Danger Zone */}
       <div className="pt-10 pb-4">
-        <button 
-          onClick={onClearData}
-          className="mx-auto flex items-center gap-2 text-red-400 text-xs px-4 py-2 rounded-full border border-transparent hover:bg-red-50 hover:border-red-100 transition-colors"
-        >
-          <Trash2 size={14} />
-          清空所有数据 (慎点)
+        <button onClick={onClearData} className="mx-auto flex items-center gap-2 text-red-400 text-xs px-4 py-2 rounded-full border border-transparent hover:bg-red-50 hover:border-red-100 transition-colors">
+          <Trash2 size={14} /> 清空所有数据 (慎点)
         </button>
       </div>
     </div>
@@ -570,7 +512,6 @@ function HomeView({ sessions, players, onStartNew, onClearData }) {
 
 function NewSessionSetup({ players, onStart, onCancel }) {
   const [selectedIds, setSelectedIds] = useState([]);
-
   const toggle = (id) => {
     if (selectedIds.includes(id)) setSelectedIds(selectedIds.filter(s => s !== id));
     else if (selectedIds.length < 4) setSelectedIds([...selectedIds, id]);
@@ -583,28 +524,14 @@ function NewSessionSetup({ players, onStart, onCancel }) {
         <h2 className="font-bold text-lg">选择今日牌友</h2>
         <div className="w-8"></div>
       </div>
-
       <div className="text-center mb-4">
         <div className="text-3xl font-bold text-emerald-800 mb-1">{selectedIds.length} / 4</div>
         <p className="text-slate-400 text-xs">请选择4位上桌玩家</p>
       </div>
-
       <div className="flex-1 overflow-y-auto grid grid-cols-2 gap-3 content-start">
         {players.map(p => (
-          <button
-            key={p.id}
-            onClick={() => toggle(p.id)}
-            className={`p-4 rounded-xl border-2 flex items-center gap-3 transition-all ${
-              selectedIds.includes(p.id) 
-                ? 'border-emerald-500 bg-emerald-50 text-emerald-800 shadow-sm' 
-                : 'border-transparent bg-white text-slate-600 shadow-sm'
-            }`}
-          >
-             <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
-               selectedIds.includes(p.id) ? 'bg-emerald-200' : 'bg-slate-100'
-             }`}>
-               {p.name[0]}
-             </div>
+          <button key={p.id} onClick={() => toggle(p.id)} className={`p-4 rounded-xl border-2 flex items-center gap-3 transition-all ${selectedIds.includes(p.id) ? 'border-emerald-500 bg-emerald-50 text-emerald-800 shadow-sm' : 'border-transparent bg-white text-slate-600 shadow-sm'}`}>
+             <Avatar player={p} size="sm" />
              <span className="font-bold">{p.name}</span>
           </button>
         ))}
@@ -612,36 +539,90 @@ function NewSessionSetup({ players, onStart, onCancel }) {
            <UserPlus size={16} /> 找不到人？去添加成员
         </div>
       </div>
-
-      <button 
-        disabled={selectedIds.length !== 4}
-        onClick={() => onStart(selectedIds)}
-        className="mt-4 w-full bg-emerald-800 text-white py-4 rounded-2xl font-bold text-lg shadow-lg disabled:opacity-50 disabled:scale-100 active:scale-95 transition-all"
-      >
-        开台
-      </button>
+      <button disabled={selectedIds.length !== 4} onClick={() => onStart(selectedIds)} className="mt-4 w-full bg-emerald-800 text-white py-4 rounded-2xl font-bold text-lg shadow-lg disabled:opacity-50 disabled:scale-100 active:scale-95 transition-all">开台</button>
     </div>
   )
 }
 
 function PlayerManager({ players, db, appId }) {
-  const [name, setName] = useState('');
-  const add = async () => {
-    if(!name.trim()) return;
-    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'club_players'), { name, joinedAt: serverTimestamp() });
-    setName('');
-  }
+  const [editingPlayer, setEditingPlayer] = useState(null);
+  const [newName, setNewName] = useState('');
+  const [newAvatar, setNewAvatar] = useState('');
+
+  const handleSave = async () => {
+    if (!newName.trim()) return;
+    
+    if (editingPlayer) {
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'club_players', editingPlayer.id), {
+        name: newName.trim(),
+        avatar: newAvatar.trim()
+      });
+      setEditingPlayer(null);
+    } else {
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'club_players'), { 
+        name: newName.trim(), 
+        avatar: newAvatar.trim(),
+        joinedAt: serverTimestamp() 
+      });
+    }
+    setNewName('');
+    setNewAvatar('');
+  };
+
+  const startEdit = (p) => {
+    setEditingPlayer(p);
+    setNewName(p.name);
+    setNewAvatar(p.avatar || '');
+  };
+
+  const cancelEdit = () => {
+    setEditingPlayer(null);
+    setNewName('');
+    setNewAvatar('');
+  };
+
   return (
     <div className="space-y-4">
-      <div className="flex gap-2">
-        <input value={name} onChange={e=>setName(e.target.value)} placeholder="新成员名字" className="flex-1 p-3 border rounded-xl outline-none focus:border-emerald-500"/>
-        <button onClick={add} className="bg-emerald-600 text-white px-4 rounded-xl"><UserPlus/></button>
+      {/* Edit/Create Form */}
+      <div className="bg-white p-4 rounded-2xl shadow-sm border border-emerald-100">
+        <h3 className="font-bold text-slate-700 mb-3">{editingPlayer ? '编辑成员' : '添加新成员'}</h3>
+        <div className="space-y-3">
+          <div className="flex gap-2 items-center">
+             <div className="w-14 h-14 rounded-full bg-slate-100 border flex items-center justify-center overflow-hidden shrink-0 text-2xl">
+               {newAvatar.startsWith('http') ? <img src={newAvatar} className="w-full h-full object-cover"/> : (newAvatar || newName[0] || '?')}
+             </div>
+             <div className="flex-1 space-y-2">
+                <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="名字" className="w-full p-2 border rounded-lg outline-none focus:border-emerald-500 text-sm"/>
+                <input value={newAvatar} onChange={e=>setNewAvatar(e.target.value)} placeholder="头像URL (选填)" className="w-full p-2 border rounded-lg outline-none focus:border-emerald-500 text-xs font-mono"/>
+             </div>
+          </div>
+          
+          {/* Preset Avatars */}
+          <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+             {PRESET_AVATARS.map(emoji => (
+               <button key={emoji} onClick={() => setNewAvatar(emoji)} className="flex-shrink-0 w-8 h-8 flex items-center justify-center bg-slate-50 hover:bg-slate-200 rounded-lg text-lg">
+                 {emoji}
+               </button>
+             ))}
+          </div>
+
+          <div className="flex gap-2">
+            {editingPlayer && <button onClick={cancelEdit} className="flex-1 bg-slate-100 text-slate-500 py-2 rounded-lg text-sm font-bold">取消</button>}
+            <button onClick={handleSave} className="flex-1 bg-emerald-600 text-white py-2 rounded-lg text-sm font-bold">
+              {editingPlayer ? '保存修改' : '添加成员'}
+            </button>
+          </div>
+        </div>
       </div>
+
       <div className="grid grid-cols-1 gap-2">
         {players.map(p => (
-          <div key={p.id} className="bg-white p-3 rounded-xl shadow-sm flex items-center gap-3">
-            <div className="w-8 h-8 bg-slate-100 rounded-full flex items-center justify-center font-bold text-xs">{p.name[0]}</div>
-            <span className="font-bold text-slate-700">{p.name}</span>
+          <div key={p.id} onClick={() => startEdit(p)} className="bg-white p-3 rounded-xl shadow-sm flex items-center justify-between cursor-pointer active:scale-[0.99] transition-transform">
+            <div className="flex items-center gap-3">
+              <Avatar player={p} size="md" />
+              <span className="font-bold text-slate-700">{p.name}</span>
+            </div>
+            <Edit3 size={16} className="text-slate-300" />
           </div>
         ))}
       </div>
@@ -652,19 +633,13 @@ function PlayerManager({ players, db, appId }) {
 function NavBtn({ id, icon: Icon, label, active, set, isMain }) {
   if (isMain) {
     return (
-      <button 
-        onClick={() => set(id)}
-        className="relative -top-5 bg-emerald-600 text-white p-4 rounded-2xl shadow-lg shadow-emerald-200 active:scale-95 transition-transform"
-      >
+      <button onClick={() => set(id)} className="relative -top-5 bg-emerald-600 text-white p-4 rounded-2xl shadow-lg shadow-emerald-200 active:scale-95 transition-transform">
         <Icon size={24} />
       </button>
     )
   }
   return (
-    <button 
-      onClick={() => set(id)}
-      className={`flex flex-col items-center gap-1 w-16 py-1 rounded-lg transition-colors ${active === id ? 'text-emerald-700 font-bold' : 'text-slate-400 hover:bg-slate-50'}`}
-    >
+    <button onClick={() => set(id)} className={`flex flex-col items-center gap-1 w-16 py-1 rounded-lg transition-colors ${active === id ? 'text-emerald-700 font-bold' : 'text-slate-400 hover:bg-slate-50'}`}>
       <Icon size={20} strokeWidth={active === id ? 2.5 : 2} />
       <span className="scale-90">{label}</span>
     </button>
