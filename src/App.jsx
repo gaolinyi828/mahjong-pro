@@ -447,7 +447,7 @@ function HomeView({ sessions, players, onStartNew }) {
            <h2 className="text-2xl font-bold mb-1">准备好了吗？</h2>
            <p className="text-emerald-200 text-sm mb-4">组局打牌，记录每一个高光时刻。</p>
            <button onClick={onStartNew} className="bg-white text-emerald-900 px-6 py-2 rounded-full font-bold text-sm shadow active:scale-95 transition-transform">
-             + 发起新一场
+             + 开一把
            </button>
          </div>
          <Trophy className="absolute -right-4 -bottom-4 text-emerald-700 opacity-50" size={120} />
