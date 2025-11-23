@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Plus, Users, BarChart3, History, Trophy, 
   UserPlus, ChevronRight, ArrowRightLeft,
-  PlayCircle, CalendarDays, CheckCircle2, X
+  PlayCircle, CalendarDays, CheckCircle2, X, Trash2, AlertTriangle
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { 
@@ -11,7 +11,7 @@ import {
 } from 'firebase/auth';
 import { 
   getFirestore, collection, addDoc, query, onSnapshot, 
-  updateDoc, doc, serverTimestamp, orderBy, deleteDoc
+  updateDoc, doc, serverTimestamp, orderBy, deleteDoc, getDocs, writeBatch
 } from 'firebase/firestore';
 
 // --- Firebase Config ---
@@ -112,7 +112,46 @@ export default function MahjongSessionApp() {
     setActiveTab('home');
   };
 
-  if (loading) return <div className="h-screen flex items-center justify-center bg-slate-100 text-emerald-700 font-bold">正在加载数据...</div>;
+  // --- 🔥 新增：清除所有数据 ---
+  const handleClearAllData = async () => {
+    if (!confirm('⚠️ 严重警告：此操作将删除所有数据！\n\n包括所有玩家、历史战绩、牌局记录。\n\n确定要执行吗？')) return;
+    if (!confirm('再次确认：数据删除后无法恢复！真的要删吗？')) return;
+
+    setLoading(true);
+    try {
+      // 批量删除需要先获取所有文档
+      const batch = writeBatch(db);
+      let operationCount = 0;
+      const MAX_BATCH_SIZE = 400; // Firestore batch limit is 500
+
+      // 辅助函数：删除集合中的文档
+      const deleteCollection = async (collectionName) => {
+         const snap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', collectionName));
+         snap.docs.forEach(d => {
+            batch.delete(d.ref);
+            operationCount++;
+         });
+      };
+
+      await deleteCollection('club_rounds');
+      await deleteCollection('club_sessions');
+      await deleteCollection('club_players');
+
+      if (operationCount > 0) {
+        await batch.commit();
+        alert(`成功删除了 ${operationCount} 条数据。世界清静了。`);
+      } else {
+        alert('本来就是空的，没啥好删的。');
+      }
+      
+    } catch (e) {
+      console.error("Delete failed", e);
+      alert("删除失败，请查看控制台错误信息。可能数据量太大，请去 Firebase 控制台手动删除。");
+    }
+    setLoading(false);
+  };
+
+  if (loading) return <div className="h-screen flex items-center justify-center bg-slate-100 text-emerald-700 font-bold">正在处理数据...</div>;
 
   const displayedTab = activeSessionId ? 'play' : activeTab;
 
@@ -148,7 +187,12 @@ export default function MahjongSessionApp() {
           />
         )}
         {displayedTab === 'home' && (
-          <HomeView sessions={sessions} players={players} onStartNew={() => setActiveTab('new_session')} />
+          <HomeView 
+            sessions={sessions} 
+            players={players} 
+            onStartNew={() => setActiveTab('new_session')} 
+            onClearData={handleClearAllData}
+          />
         )}
         {displayedTab === 'new_session' && (
           <NewSessionSetup players={players} onStart={handleStartSession} onCancel={() => setActiveTab('home')} />
@@ -271,7 +315,6 @@ function ActiveTable({ session, rounds, players, onEndSession, db, appId }) {
   );
 }
 
-// --- Score Input (Fixed: Convert Arrays to Object for Firestore) ---
 function ScoreInput({ session, players, onCancel, onSave, db, appId }) {
   const [scores, setScores] = useState(['', '', '', '']);
   const [tags, setTags] = useState([[], [], [], []]);
@@ -308,9 +351,6 @@ function ScoreInput({ session, players, onCancel, onSave, db, appId }) {
       if (!confirm(`总分为 ${sum}，确定提交吗？`)) return;
     }
     
-    // ✅ 关键修复：Firebase 不支持嵌套数组 (Array of Arrays)
-    // 我们必须将二维数组 tags 转换为对象存储
-    // 例如: [['zimo'], []] -> { 0: ['zimo'], 1: [] }
     const tagsMap = Object.assign({}, tags);
 
     await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'club_rounds'), {
@@ -382,7 +422,6 @@ function ScoreInput({ session, players, onCancel, onSave, db, appId }) {
   );
 }
 
-// --- Global Stats (Updated) ---
 function GlobalStats({ players, allRounds, sessions }) {
   const stats = useMemo(() => {
     const playerStats = {};
@@ -405,11 +444,9 @@ function GlobalStats({ players, allRounds, sessions }) {
           if (s > 0) pStat.wins += 1;
           if (s > pStat.max) pStat.max = s;
 
-          // tags 解析逻辑 (兼容数组和对象)
-          // Firestore 取出的对象依然可以通过索引访问: tags[0]
           if (round.tags && (Array.isArray(round.tags[idx]) || round.tags[idx])) {
              const myTags = round.tags[idx];
-             if (Array.isArray(myTags)) { // 确保是数组
+             if (Array.isArray(myTags)) { 
                 if (myTags.includes('zimo')) pStat.zimo += 1;
                 if (myTags.includes('hu')) pStat.hu += 1;
                 if (myTags.includes('pao')) pStat.pao += 1;
@@ -476,7 +513,7 @@ function GlobalStats({ players, allRounds, sessions }) {
   );
 }
 
-function HomeView({ sessions, players, onStartNew }) {
+function HomeView({ sessions, players, onStartNew, onClearData }) {
   return (
     <div className="space-y-6">
       <div className="bg-emerald-800 rounded-2xl p-6 text-white shadow-lg shadow-emerald-200/50 relative overflow-hidden">
@@ -515,6 +552,17 @@ function HomeView({ sessions, players, onStartNew }) {
           })}
           {sessions.length === 0 && <p className="text-center text-slate-400 text-sm py-4">暂无历史记录</p>}
         </div>
+      </div>
+
+      {/* Danger Zone */}
+      <div className="pt-10 pb-4">
+        <button 
+          onClick={onClearData}
+          className="mx-auto flex items-center gap-2 text-red-400 text-xs px-4 py-2 rounded-full border border-transparent hover:bg-red-50 hover:border-red-100 transition-colors"
+        >
+          <Trash2 size={14} />
+          清空所有数据 (慎点)
+        </button>
       </div>
     </div>
   );
