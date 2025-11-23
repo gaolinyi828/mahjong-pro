@@ -170,7 +170,7 @@ export default function MahjongSessionApp() {
         )}
 
         {displayedTab === 'stats' && (
-          <GlobalStats players={players} allRounds={allRounds} />
+          <GlobalStats players={players} allRounds={allRounds} sessions={sessions} />
         )}
 
         {displayedTab === 'players' && (
@@ -485,39 +485,104 @@ function HomeView({ sessions, players, onStartNew }) {
   );
 }
 
-// --- 5. Global Stats & Player Manager (Simplified for brevity) ---
-function GlobalStats({ players, allRounds }) {
-  // Aggregate ALL rounds regardless of session
+function GlobalStats({ players, allRounds, sessions }) {
+  // 使用 useMemo 缓存计算结果，防止卡顿
   const stats = useMemo(() => {
-    return players.map(p => {
-      let total = 0;
-      let wins = 0;
-      let count = 0;
-      
-      allRounds.forEach(r => {
-        // This logic assumes we need to find if player was in this round
-        // But 'rounds' now linked to 'session', and 'session' has 'players'.
-        // In a real optimized NoSQL structure, we might denormalize playerIds into rounds for easier querying.
-        // HERE: We unfortunately can't easily link them without the session data for every round 
-        // IF we want to keep this single-file code clean.
-        // FIX: In `club_rounds`, we stored `sessionId`. We need to map sessions to rounds to know who played.
-        // For this demo, we will skip detailed stats calculation to keep code runnable without complexity explosion.
-        // Instead, let's just show a placeholder or a simple "Total Rounds" if we had playerIds in rounds.
-        
-        // *Self-Correction*: In the `ScoreInput`, we only stored scores. We SHOULD store playerIds in the round too for easier stats.
-        // Let's assume for V2 we want to keep it simple.
-      });
-      return { ...p, total: 0 }; // Placeholder
+    // 1. 初始化所有玩家的数据
+    const playerStats = {};
+    players.forEach(p => {
+      playerStats[p.id] = { 
+        id: p.id, 
+        name: p.name, 
+        total: 0,      // 总分
+        count: 0,      // 总局数
+        wins: 0,       // 胜局数 (分>0)
+        max: -9999,    // 单局最高
+        sessions: 0    // 参加过的场次
+      };
     });
-  }, [players, allRounds]);
+
+    // 2. 遍历每一局，把分加到对应的人头上
+    allRounds.forEach(round => {
+      // 找到这局对应的场次 (为了获取是谁打的)
+      const session = sessions.find(s => s.id === round.sessionId);
+      
+      // 如果场次还没加载出来，或者被删了，就跳过
+      if (!session) return; 
+
+      // 遍历这一局的4个分数
+      round.scores.forEach((score, idx) => {
+        const playerId = session.playerIds[idx];
+        const pStat = playerStats[playerId];
+        
+        if (pStat) {
+          const s = parseInt(score) || 0;
+          pStat.total += s;
+          pStat.count += 1;
+          if (s > 0) pStat.wins += 1;
+          if (s > pStat.max) pStat.max = s;
+        }
+      });
+    });
+
+    // 3. 转换成数组并排序 (按总分从高到低)
+    return Object.values(playerStats)
+      .filter(p => p.count > 0) // 只显示打过牌的人
+      .sort((a, b) => b.total - a.total);
+
+  }, [players, allRounds, sessions]);
 
   return (
-    <div className="p-4 text-center text-slate-500">
-      <BarChart3 className="mx-auto mb-2 opacity-50" size={48} />
-      <p>统计功能正在升级中...</p>
-      <p className="text-xs">数据已在后台安全保存 (总局数: {allRounds.length})</p>
+    <div className="space-y-6">
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-emerald-100 text-center">
+        <h2 className="text-xl font-bold text-emerald-800">雀神风云榜</h2>
+        <p className="text-slate-400 text-xs mt-1">累计统计 {allRounds.length} 局</p>
+      </div>
+
+      <div className="space-y-3">
+        {stats.map((stat, index) => (
+          <div key={stat.id} className="bg-white p-4 rounded-xl shadow-sm flex items-center justify-between border border-slate-50 relative overflow-hidden">
+            {/* 排名角标 */}
+            <div className={`absolute top-0 left-0 w-1 h-full ${
+              index === 0 ? 'bg-yellow-400' : index === 1 ? 'bg-slate-300' : index === 2 ? 'bg-amber-600' : 'bg-transparent'
+            }`}></div>
+
+            <div className="flex items-center gap-4">
+              {/* 排名数字 */}
+              <div className={`w-8 h-8 flex items-center justify-center rounded-full font-bold text-sm ${
+                 index < 3 ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-400'
+              }`}>
+                {index + 1}
+              </div>
+              
+              <div>
+                <div className="font-bold text-slate-700 text-lg">{stat.name}</div>
+                <div className="text-xs text-slate-400 flex gap-2">
+                   <span>局数: {stat.count}</span>
+                   <span>胜率: {Math.round((stat.wins / stat.count) * 100)}%</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="text-right">
+               <div className={`text-2xl font-black font-mono ${
+                 stat.total > 0 ? 'text-red-500' : stat.total < 0 ? 'text-emerald-600' : 'text-slate-300'
+               }`}>
+                 {stat.total > 0 ? `+${stat.total}` : stat.total}
+               </div>
+               <div className="text-[10px] text-slate-400">最高: {stat.max > 0 ? `+${stat.max}` : stat.max}</div>
+            </div>
+          </div>
+        ))}
+        
+        {stats.length === 0 && (
+          <div className="text-center text-slate-400 py-10">
+            👻 还没有数据，快去开一场吧！
+          </div>
+        )}
+      </div>
     </div>
-  )
+  );
 }
 
 function PlayerManager({ players, db, appId }) {
